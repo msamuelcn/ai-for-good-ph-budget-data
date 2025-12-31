@@ -151,3 +151,68 @@ All findings should be interpreted in context and supported by official document
 ## 📄 License
 
 Open for research, transparency, and public-interest use.
+
+---
+
+## 👥 Team & Contributors
+
+**Project Lead**
+- Team name: HackaMarathoner
+- Name: Samuel Nicasio
+- GitHub: https://github.com/msamuelcn
+- LinkedIn: https://www.linkedin.com/in/mark-samuel-nicasio-2480b0127/
+
+Contributions include data analysis, anomaly detection logic, documentation, and project design.
+
+---
+
+## 🔗 Data Sources & References
+
+This project uses **publicly available Open Government Data** from the Philippines.
+
+### Primary Data Source
+- **Philippine Open Government Budget Data**
+  - Source: Department of Budget and Management (DBM) and [BetterGov.PH](https://bettergov.ph/)
+  - Coverage: Fiscal Years 2020–2026
+  - Data Type: National Expenditure Program (NEP) and General Appropriations Act (GAA)
+  - License: Open Government / Public Data
+
+> The dataset includes budget records, organizational hierarchies, geographic regions, funding sources, and expenditure classifications.
+
+---
+
+## 📦 Related GitHub Projects / Data Repositories
+
+The following repositories are referenced or used for data sourcing, preprocessing, or inspiration:
+
+- **Open Government Data - Philippine Budget Graph Database**
+  https://github.com/bettergovph/open-budget-data
+  *(Original source or mirror of the open budget dataset)*
+
+> These repositories are acknowledged for providing open data and reference materials used in this analysis.
+
+---
+
+## 🔍 Project Scope & Attribution
+
+- This project focuses on **budget analysis and transparency**
+- It does **not modify** original data
+- All findings are derived from publicly available datasets
+- Interpretations are analytical and informational in nature
+
+---
+
+## 📫 Contact
+
+For questions, feedback, or collaboration inquiries:
+
+- GitHub Issues: Please open an issue in this repository
+- Email (optional): marksamuel.nicasio@gmail.com
+
+---
+
+## ⚖️ Acknowledgements
+
+We acknowledge the [BetterGov.PH](https://bettergov.ph/) and open-data contributors who make public financial data accessible for research, transparency, and civic innovation.
+
+---
