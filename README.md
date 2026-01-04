@@ -1,40 +1,40 @@
-# NEP → GAA Budget Anomaly Detection
+# NEP → GAA Budget Drift Analyzer
 
 ## 📌 Overview
 
-This project analyzes how proposed government budgets (**NEP – National Expenditure Program**) change after they are approved (**GAA – General Appropriations Act**).
-
-The goal is to **detect and explain unusual budget adjustments** in a transparent, data-driven way—especially for users who are **not technical**.
+Government transparency depends on understanding how budgets change during the legislative approval process. This application automates the detection of "budget drift"—unexpected insertions, deletions, or reallocations—using historical anomaly scoring and Large Language Models (LLMs).
 
 > **NEP = proposed budget**
 > **GAA = final approved budget**
 
 ---
 
-## 🎯 What Problem Does This Solve?
+## ✨ Key Features
 
-Government budget data contains millions of line items. While NEP and GAA data are publicly available, it is difficult to answer simple but important questions such as:
+### 1. Data Orchestration with Snowpark
+The app utilizes the `get_active_session()` context to execute complex SQL push-down operations. This ensures that massive budget datasets are processed within Snowflake's secure boundary, only sending the necessary aggregated results to the Streamlit UI.
 
-- Which budget items were significantly reduced or increased?
-- Which regions gained or lost funding after approval?
-- Are some changes unusual compared to historical patterns?
+### 2. Interactive Anomaly Detection
+- **Drift Scoring:** Automatically identifies line items with high "Anomaly Scores" based on the variance between NEP and GAA.
+- **Regional & Object Analysis:** Visualizes regional allocation shifts and top 10 budget object reallocations using interactive Plotly charts.
 
-Most existing tools show raw numbers but **do not explain what is unusual or why it matters**.
+### 3. Automated Auditing with Snowflake Cortex AI
+When a suspicious budget item is selected, the app dynamically constructs a context-rich prompt. It uses the `SNOWFLAKE.CORTEX.COMPLETE` function to generate a plain-language executive summary explaining:
+- Whether the funding was a "late addition" (inserted budget).
+- The concentration of funding within specific projects or offices.
+- Why the specific drift requires further manual review.
 
----
+## 📁 Project Structure
+- `streamlit_app.py`: The main application logic, including Snowpark queries and UI layout.
+- `AI_FOR_GOOD_PH_BUDGET_DATA.PUBLIC.DETECTED_ANOMALY`: The primary Snowflake table containing pre-computed anomaly scores.
 
-## 💡 What Is an “Anomaly” in This Project?
-
-An anomaly is **not automatically a problem or wrongdoing**.
-
-In this project, an anomaly means:
-
-> A **budget change from NEP to GAA** that is **unusually large or inconsistent** compared to similar items, regions, or past years.
-
-Examples:
-- A region receiving a 60% increase while most regions changed very little
-- A budget item that is consistently reduced every year after proposal
-- A sudden increase that breaks historical patterns
+## ⚙️ Setup & Deployment
+1. **Prerequisites:** - A Snowflake account with access to the `AI_FOR_GOOD_PH_BUDGET_DATA` database.
+   - Privileges to use `SNOWFLAKE.CORTEX.COMPLETE`.
+2. **Installation:**
+   Upload `streamlit_app.py` to a Snowflake Streamlit Stage or run locally using `snowflake-streamlit-purview`.
+3. **Environment:**
+   Ensure your Snowflake role has the necessary warehouse permissions to execute the analytical queries.
 
 ---
 
@@ -50,11 +50,11 @@ These changes reflect normal legislative review, prioritization, or reallocation
 
 ---
 
-## 🧠 How Anomalies Are Detected (Simple Explanation)
+## 🧠 How Drifts Are Detected (Simple Explanation)
 
-The anomaly detection follows four clear steps:
+The Drift detection follows four clear steps:
 
-### 1️⃣ Compare Proposed vs Approved Budgets
+### Compare Proposed vs Approved Budgets
 Budget amounts are aggregated by:
 - Fiscal year
 - Agency
@@ -62,31 +62,6 @@ Budget amounts are aggregated by:
 - Budget classification
 
 Then the **difference** and **percentage change** between NEP and GAA are calculated.
-
----
-
-### 2️⃣ Ignore Very Small Changes
-Small adjustments are normal.
-
-Changes below **±5%** are treated as **no meaningful adjustment** and are **not flagged**.
-
-This avoids false alarms.
-
----
-
-### 3️⃣ Compare Against Similar Regions
-For each year and budget classification:
-- The average change across regions is calculated
-- A region is flagged only if:
-  - The change is meaningful, **and**
-  - It deviates significantly from how other regions behaved
-
-This prevents regions with **0% change** from being incorrectly flagged.
-
----
-
-### 4️⃣ Check Against Historical Patterns
-If the same budget item behaved one way in previous years but suddenly changes dramatically, it is flagged for review.
 
 ---
 
@@ -111,15 +86,11 @@ The system is designed to **support transparency and review**, not accusation.
 
 ---
 
-## 🛠 Technology Used (Current Prototype)
-
-- **Python**
-- **Pandas**
-- CSV / Parquet input files
-- Reproducible notebooks or scripts
-
-> This repository does **not require Snowflake**.
-> The logic is designed to be easily portable to Snowflake in future versions.
+## 🛠️ Tech Stack
+- **Frontend:** [Streamlit](https://streamlit.io/)
+- **Data Engine:** [Snowflake Snowpark](https://www.snowflake.com/en/data-cloud/snowpark/)
+- **AI/ML:** [Snowflake Cortex AI](https://docs.snowflake.com/en/user-guide/snowflake-cortex/llm-functions) (using `snowflake-arctic`)
+- **Visualizations:** [Plotly Express](https://plotly.com/python/)
 
 ---
 
