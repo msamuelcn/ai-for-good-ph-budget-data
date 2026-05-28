@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 import os
 
+import duckdb
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -11,6 +12,10 @@ from sqlalchemy.engine import Engine
 from google.cloud.alloydb.connector import Connector, IPTypes
 
 DEFAULT_SCHEMA = "ai_for_good_budget_drift"
+DEFAULT_BATCH_SIZE = 100_000
+DEFAULT_DB_CHUNKSIZE = 10_000
+
+connector = Connector()
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -47,7 +52,6 @@ def get_engine_with_direct_host() -> Engine:
     database = os.environ["ALLOYDB_DATABASE"]
     username = os.environ["ALLOYDB_USER"]
     password = os.environ["ALLOYDB_PASSWORD"]
-
     url = f"postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
     return create_engine(url, pool_pre_ping=True)
 
@@ -56,11 +60,11 @@ def get_engine_with_connector() -> Engine:
     instance_uri = os.environ["ALLOYDB_INSTANCE_URI"]
     database = os.environ["ALLOYDB_DATABASE"]
     username = os.environ["ALLOYDB_USER"]
-    password = os.environ["ALLOYDB_PASSWORD"]
-    ip_type_name = os.environ.get("ALLOYDB_IP_TYPE", "PRIVATE").upper()
-    ip_type = IPTypes.PRIVATE if ip_type_name == "PRIVATE" else IPTypes.PUBLIC
+    password = os.environ.get("ALLOYDB_PASSWORD", "")
+    use_iam_auth = os.environ.get("ALLOYDB_ENABLE_IAM_AUTH", "true").lower() == "true"
 
-    connector = Connector()
+    ip_type_name = os.environ.get("ALLOYDB_IP_TYPE", "PUBLIC").upper()
+    ip_type = IPTypes.PUBLIC if ip_type_name == "PUBLIC" else IPTypes.PRIVATE
 
     def get_connection() -> object:
         return connector.connect(
@@ -69,45 +73,122 @@ def get_engine_with_connector() -> Engine:
             user=username,
             password=password,
             db=database,
+            enable_iam_auth=use_iam_auth,
             ip_type=ip_type,
         )
 
-    # NOTE: creator callback follows the official connector integration pattern.
-    engine = create_engine(
-        "postgresql+pg8000://", creator=get_connection, pool_pre_ping=True
-    )
-    return engine
+    return create_engine("postgresql+pg8000://", creator=get_connection, pool_pre_ping=True)
 
 
-def prepare_table(engine, schema: str, table_name: str) -> None:
+def prepare_table(engine: Engine, schema: str, table_name: str) -> None:
     with engine.begin() as connection:
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
         connection.execute(text(f"TRUNCATE TABLE {schema}.{table_name}"))
 
 
-def bulk_insert(engine, schema: str, table_name: str, df: pd.DataFrame) -> None:
-    if df.empty:
-        print(f"Skipping empty dataframe for {table_name}")
-        return
-
-    df.to_sql(
-        table_name,
-        engine,
-        schema=schema,
-        if_exists="append",
-        index=False,
-        chunksize=5000,
-        method="multi",
+def count_rows_from_parquet(duck_connection: duckdb.DuckDBPyConnection, parquet_path: Path) -> int:
+    return int(
+        duck_connection.execute(
+            "SELECT COUNT(*) FROM read_parquet(?)",
+            [str(parquet_path)],
+        ).fetchone()[0]
     )
 
 
-def load_one(engine, schema: str, table_name: str, parquet_path: Path) -> None:
+def fetch_batch_from_parquet(
+    duck_connection: duckdb.DuckDBPyConnection,
+    parquet_path: Path,
+    batch_size: int,
+    offset: int,
+) -> pd.DataFrame:
+    query = (
+        "SELECT * FROM read_parquet(?) "
+        f"LIMIT {int(batch_size)} OFFSET {int(offset)}"
+    )
+    batch = duck_connection.execute(query, [str(parquet_path)]).df()
+    return coerce_dataframe(batch)
+
+
+def insert_batch(
+    engine: Engine,
+    schema: str,
+    table_name: str,
+    dataframe: pd.DataFrame,
+    db_chunksize: int,
+) -> int:
+    with engine.begin() as connection:
+        dataframe.to_sql(
+            table_name,
+            connection,
+            schema=schema,
+            if_exists="append",
+            index=False,
+            chunksize=db_chunksize,
+            method=None,
+        )
+    return len(dataframe)
+
+
+def count_rows_in_table(
+    engine: Engine,
+    schema: str,
+    table_name: str,
+) -> int:
+    with engine.connect() as connection:
+        return int(connection.execute(text(f"SELECT COUNT(*) FROM {schema}.{table_name}")).scalar_one())
+
+
+def load_one(
+    engine: Engine,
+    schema: str,
+    table_name: str,
+    parquet_path: Path,
+    batch_size: int,
+    db_chunksize: int,
+) -> None:
     print(f"Loading {parquet_path.name} -> {schema}.{table_name}")
-    dataframe = load_parquet_file(parquet_path)
-    print(f"Rows: {len(dataframe):,}")
+    if not parquet_path.exists():
+        raise FileNotFoundError(f"Missing parquet file: {parquet_path}")
+
     prepare_table(engine, schema, table_name)
-    bulk_insert(engine, schema, table_name, dataframe)
+
+    duck_connection = duckdb.connect(database=":memory:")
+    total_rows = count_rows_from_parquet(duck_connection, parquet_path)
+    print(f"Source rows: {total_rows:,}")
+
+    if total_rows == 0:
+        print(f"Skipping empty source for {table_name}")
+        return
+
+    loaded_rows = 0
+    batch_no = 0
+    while loaded_rows < total_rows:
+        batch_no += 1
+        batch_df = fetch_batch_from_parquet(
+            duck_connection,
+            parquet_path,
+            batch_size,
+            loaded_rows,
+        )
+        if batch_df.empty:
+            break
+
+        inserted = insert_batch(engine, schema, table_name, batch_df, db_chunksize)
+        loaded_rows += inserted
+        progress = (loaded_rows / total_rows) * 100
+        print(
+            f"Batch {batch_no:>4}: +{inserted:,} rows | total={loaded_rows:,}/{total_rows:,} ({progress:,.2f}%)"
+        )
+
+    inserted_rows = count_rows_in_table(engine, schema, table_name)
+    print(f"Inserted rows in database: {inserted_rows:,}")
+    if inserted_rows != total_rows:
+        raise RuntimeError(
+            f"Row count mismatch for {table_name}: source={total_rows:,}, loaded={inserted_rows:,}"
+        )
+
     print(f"Done: {schema}.{table_name}")
+    duck_connection.close()
 
 
 def main() -> None:
@@ -129,16 +210,38 @@ def main() -> None:
         default=Path("preaggregated_budget_details.parquet"),
         help="Path to preaggregated_budget_details.parquet",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help="Rows read from parquet per batch.",
+    )
+    parser.add_argument(
+        "--db-chunksize",
+        type=int,
+        default=DEFAULT_DB_CHUNKSIZE,
+        help="Rows per database insert chunk in pandas.to_sql.",
+    )
     args = parser.parse_args()
 
     engine = get_engine()
 
-    load_one(engine, args.schema, "detected_anomaly", args.detected_anomaly)
+    load_one(
+        engine,
+        args.schema,
+        "detected_anomaly",
+        args.detected_anomaly,
+        args.batch_size,
+        args.db_chunksize,
+    )
+
     load_one(
         engine,
         args.schema,
         "preaggregated_budget_details",
         args.preaggregated_budget,
+        args.batch_size,
+        args.db_chunksize,
     )
 
     with engine.begin() as connection:
